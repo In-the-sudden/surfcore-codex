@@ -40,7 +40,7 @@ node plugin/src/cli.mjs demo-codex '请用一句话向我打招呼'
 
 Codex 子进程优先沿用终端已有的代理设置。Windows 开启了本机 HTTP 代理且终端未设置代理时，桥接会把系统代理传给 Codex 的 HTTPS 请求。QQ 的 OneBot 地址仍走本机回环。
 
-## 接上自己的 QQ
+## Codex 接入 QQ
 
 控制台的“QQ 桥接”提供“启动 SnowLuma”和“打开 SnowLuma”：在启动控制台前用 SURFCORE_SNOWLUMA_DIR 指定已有的安装目录。启动前检查本地监听地址和关闭自动加载 QQ 的配置；点击启动会等待页面就绪后自动打开，浏览器拦截弹窗时可点击“打开 SnowLuma”。用户需在 SnowLuma 页面手动登录、操作机器人。页面就绪不保证机器人已连接。需要重启 SurfCore 控制台才会加载新版。
 
