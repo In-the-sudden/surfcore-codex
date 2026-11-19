@@ -1,5 +1,7 @@
 # SurfCore for Codex 0.1.8
 
+> **鸣谢**　感谢原版 [SurfCore](https://github.com/Mieksido/surfcore) 的作者 [Mieksido](https://github.com/Mieksido) 和所有贡献者。
+
 这个本地原型借鉴 SurfCore 的角色包设计。每个角色有自己的 `persona.md`、共享手记和分会话记录。内置「林」和「明」，也可用自己的 Markdown 人设卡新建角色。切回已有角色会重新读入它自己的近期记录。
 
 QQ 私聊和模拟消息分别保存在角色目录下。最近 30 天内最多 10 轮对话会提供给模型，其余留在本地存档。用户明确保存的手记可以在 Codex 和 QQ 共用，QQ 原始会话记录不会通过插件工具暴露给 Codex 桌面聊天。角色状态默认在 `%LOCALAPPDATA%\SurfCoreCodex`，可用 `SURFCORE_DATA_DIR` 指定目录。
