@@ -1,0 +1,20 @@
+{
+  "name": "surfcore-local",
+  "interface": {
+    "displayName": "SurfCore Local"
+  },
+  "plugins": [
+    {
+      "name": "surfcore-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

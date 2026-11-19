@@ -1,0 +1,8 @@
+.memory-graph { width: 100%; overflow-x: auto; background: #eff3ef; border: 1px solid #dce3db; border-radius: 6px; }
+.memory-graph svg { display: block; width: 100%; min-width: 600px; height: 300px; }
+.graph-link { stroke: #b6c8bd; stroke-width: 2; }
+.graph-node { fill: #28765e; stroke: #fff; stroke-width: 2; cursor: pointer; }
+.graph-node.pinned { fill: #b46b32; }
+.graph-node.archived { fill: #909b99; }
+.graph-node:focus { stroke: #1d3130; stroke-width: 4; outline: none; }
+#memory-graph-selection { overflow-wrap: anywhere; }

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "surfcore_roles": {
+      "command": "node",
+      "cwd": ".",
+      "args": ["./src/mcp.mjs"]
+    }
+  }
+}

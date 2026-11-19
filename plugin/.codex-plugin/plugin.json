@@ -1,0 +1,11 @@
+{
+  "name": "surfcore-codex",
+  "version": "0.1.8",
+  "description": "本地角色卡、角色独立记忆与 QQ 文字桥接。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "SurfCore for Codex",
+    "shortDescription": "角色切换与独立记忆"
+  }
+}

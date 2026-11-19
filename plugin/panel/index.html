@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SurfCore · 角色控制台</title><link rel="stylesheet" href="/panel.css"><link rel="stylesheet" href="/memory-graph.css"><script src="/panel.js" defer></script><script src="/qq.js" defer></script></head>
+<body>
+<aside><div class="brand">◈ SurfCore</div><p>角色与运行管理</p><nav aria-label="控制台"><a href="#overview">运行总览</a><a href="#roles">角色与人格</a><a href="#qq">QQ 桥接</a><a href="#memory">记忆管理</a><a href="#budget">额度保护</a><a href="#language">语言与语音</a></nav><small>本机控制台</small></aside>
+<main>
+<header><div><span class="eyebrow">CHARACTER WORKSPACE</span><h1>角色控制台</h1><p>记忆、表达方式与每日用量，都在这里。</p></div><label>查看角色<select id="character" disabled></select></label></header>
+<div id="status" role="status" aria-live="polite">正在连接…</div>
+<div id="workspace" inert>
+<section id="overview"><span class="eyebrow">RUNTIME</span><h2>运行总览</h2><p id="active-role"></p><div id="account-status">读取模型与账号状态中…</div><button type="button" id="refresh-account" class="secondary">刷新账号与额度</button><p class="hint">账号状态来自本机 Codex。额度是整个账号共用的额度；刷新状态不会生成模型回复。</p></section>
+<section id="roles"><span class="eyebrow">CHARACTERS</span><h2>角色与人格</h2><div class="actions"><button type="button" id="activate-role">加载为当前角色</button><button type="button" id="snapshot-role" class="secondary">立即存档</button><button type="button" id="export-persona" class="secondary">下载当前人格卡</button></div><p class="hint">加载会改变 MCP 和桥接后续调用使用的角色；切换前自动存档。</p>
+<form id="persona-form"><label for="persona">人格卡（Markdown）</label><textarea id="persona" maxlength="12000" required rows="9"></textarea><label>导入人格文件<input type="file" id="persona-file" accept=".md,.txt"></label><button>保存人格</button></form>
+<details id="storage-settings"><summary>角色与记忆存储位置</summary><p>当前目录：<span id="storage-current">正在读取…</span></p><div class="actions"><button id="storage-open" type="button" class="secondary">打开存储目录</button><button id="storage-open-role" type="button" class="secondary">打开当前角色文件夹</button></div><form id="storage-form"><label for="storage-directory">新存储目录</label><input id="storage-directory" placeholder="例如 D:\SurfCore角色" required><div class="actions"><button id="storage-choose" type="button" class="secondary">选择文件夹</button><button type="submit">复制并切换位置</button></div></form><p class="hint">请选择空目录。迁移前请关闭旧版 SurfCore 面板、QQ 桥接和旧版 Codex 角色会话，避免旧程序继续写入原位置。原文件会保留；其他设置和用量仍存放在原数据目录。</p><p class="hint">人格卡的最新版本记录在 persona-versions.jsonl 中，persona.md 可能是创建时的版本；可用“下载当前人格卡”获得最新内容。</p></details>
+<details><summary>新建角色</summary><form id="create-role-form"><label>角色 ID<input id="new-id" pattern="[a-z][a-z0-9-]{0,39}" required placeholder="例如 xiaolin"></label><label>人格卡<textarea id="new-persona" maxlength="12000" required placeholder="# 角色名字&#10;性格、说话方式和背景…"></textarea></label><button>创建角色</button></form></details>
+<details><summary>存档与恢复</summary><p class="hint">存档包含人格及记忆日志备份。恢复操作恢复人格，保留之后发生的记忆，恢复前也会存档。</p><div id="snapshots"></div></details></section>
+<section id="qq"><span class="eyebrow">BRIDGE</span><h2>QQ 桥接</h2><h3>SnowLuma</h3><p id="snow-status" role="status">正在检查 SnowLuma…</p><div class="actions"><button id="snow-start" type="button">启动 SnowLuma</button><a id="snow-open" href="http://127.0.0.1:5099/" target="_blank" rel="noreferrer" hidden>打开 SnowLuma</a><button id="snow-refresh" type="button" class="secondary">刷新状态</button></div><p class="hint">启动后打开 SnowLuma，按其界面登录机器人 QQ；主号保持原样。完成后返回本页启动预览或发送。</p><h3>SurfCore 桥接</h3><p id="qq-state" role="status">正在读取桥接状态…</p><p class="hint">此处仅显示由本控制台启动的桥接。预览会调用 Codex，但不会发送或保存回复；发送模式会回复符合白名单的消息。关闭控制台会停止此处启动的桥接。</p>
+<form id="qq-settings"><div class="columns"><div><label>主人 QQ<input id="qq-owner" inputmode="numeric" required></label><label>机器人 QQ<input id="qq-bot" inputmode="numeric" required></label><label>管理员 QQ 白名单（逗号分隔）<input id="qq-admins"></label><label>群白名单（逗号分隔）<input id="qq-groups"></label></div><div><label>OneBot WebSocket 地址<input id="qq-ws" required></label><label>OneBot HTTP 地址<input id="qq-http" required></label><label>WebSocket 令牌（可选）<input id="qq-ws-token" type="password" autocomplete="off"></label><label>HTTP 令牌（可选）<input id="qq-http-token" type="password" autocomplete="off"></label></div></div><button id="qq-save">保存连接与白名单</button></form>
+<label class="check"><input id="qq-snow-tokens" type="checkbox" checked>从本机 SnowLuma 配置读取 OneBot 令牌</label><p class="hint">勾选后使用机器人和地址匹配的本机配置；令牌不写入 SurfCore 设置。群聊仅限白名单；未获本次登录授权前，只有主人或管理员 @ 机器人会触发回复。</p><div class="actions"><button id="qq-preview" type="button">启动预览</button><button id="qq-send" type="button" class="secondary">启动发送</button><button id="qq-pause" type="button" class="secondary">暂停</button><button id="qq-stop" type="button" class="secondary">停止桥接</button><button id="qq-refresh" type="button" class="secondary">刷新状态</button></div><p class="hint">暂停后不再开始处理新消息，已开始的模型调用可能继续消耗额度，但暂停期间不会发送其结果。</p>
+<div id="qq-media-settings" hidden>
+  <details id="qq-faces">
+    <summary>收藏表情</summary>
+    <p class="hint">同步机器人 QQ 的收藏，勾选允许知微使用的表情。标签可写适用的语气或场景。</p>
+    <button id="qq-faces-sync" type="button" class="secondary">同步机器人收藏</button>
+    <p id="qq-faces-status" role="status"></p>
+    <form id="qq-faces-form" hidden>
+      <div id="qq-faces-list"></div>
+      <button id="qq-faces-save">保存可用表情</button>
+    </form>
+  </details>
+  <details id="qq-song-import">
+    <summary>学唱音源</summary>
+    <p id="voice-cache-status" class="hint" role="status">正在检查语音缓存…</p>
+    <p class="hint">知微优先使用本地音源。在线找不到录音时，可以导入本机的音频。副歌时间请按这一份录音填写。</p>
+    <form id="qq-song-import-form">
+      <div class="columns">
+        <label>歌名<input id="qq-song-title" maxlength="100" required></label>
+        <label>歌手<input id="qq-song-artist" maxlength="100" required></label>
+      </div>
+      <label>本机音频路径<input id="qq-song-path" maxlength="2048" required placeholder="在文件资源管理器中复制文件路径"></label>
+      <label>主唱类型<select id="qq-song-vocal"><option value="">未标注</option><option value="female">女声（默认优先）</option><option value="male">男声（点名歌手时使用）</option></select></label>
+      <p class="hint">填写这份录音的开唱和句尾时间后，点「前 30 秒」会从开唱前 1 秒播到完整句尾。</p>
+      <div class="columns">
+        <label>第一句开唱秒数（可选）<input id="qq-song-opening-vocal-start" type="number" min="0" step="any"></label>
+        <label>约半分钟处的完整句尾秒数（可选）<input id="qq-song-opening-end" type="number" min="0" step="any"></label>
+      </div>
+      <div class="columns">
+        <label>副歌开始秒数（可选）<input id="qq-song-chorus-start" type="number" min="0" step="any"></label>
+        <label>副歌结束秒数（可选）<input id="qq-song-chorus-end" type="number" min="0" step="any"></label>
+      </div>
+      <button id="qq-song-import-save">导入本地录音</button>
+    </form>
+    <p id="qq-song-import-status" role="status"></p>
+  </details>
+</div>
+<h3>运行日志</h3><pre id="qq-log">暂无记录</pre></section>
+<section id="memory"><div class="section-head"><div><span class="eyebrow">01 / MEMORY</span><h2>值得记住的事</h2></div><label>记录范围<select id="scope"><option value="">全部范围</option></select></label></div>
+<p>普通记忆权重在 60 天内下降；重要和特别重要的记忆衰减更慢。强化恢复权重，永久固定保持优先召回。原始记录保留在原会话；经过筛选的概括可能在同一角色的其他会话中召回。</p>
+<form id="memory-form"><label for="note">添加角色手记</label><textarea id="note" maxlength="1000" required placeholder="写下一条希望角色记住的事实…"></textarea><div class="form-foot"><small>角色手记用于 Codex 和主人私聊，不供管理员私聊或群聊读取。</small><button>保存手记</button></div></form>
+<details id="diary-details"><summary>角色日记</summary><p id="diary-auto-status" role="status"></p><p id="diary-status" role="status"></p><pre id="diary-content"></pre><button id="diary-refresh" type="button" class="secondary">刷新日记</button><form id="diary-form"><label for="diary-text">添加内容</label><textarea id="diary-text" rows="4"></textarea><button>追加到日记</button></form><form id="diary-today-form"><label for="diary-today-text">覆盖当天内容（留空可删除）</label><textarea id="diary-today-text" rows="4"></textarea><button>保存当天</button><button id="diary-delete" type="button" class="secondary">删除当天</button></form><button id="diary-compose" type="button" class="secondary">根据所选对话写日记</button><p class="hint">每天首次打开控制台会回看前 3 天，由角色决定是否写。每天最多 500 个字符；当天内容可随时覆盖或删除。手动写作使用当前选定的单个对话范围及模型额度。日记仅供本机控制台查看，不自动发送或加入对话召回。</p></details>
+<form id="memory-search-form"><label for="memory-search">搜索记录</label><div class="actions"><input id="memory-search" type="search" maxlength="200" placeholder="搜索手记或对话"><button>搜索</button></div></form>
+<details id="extraction-details" open><summary>模型压缩与跨对话共享</summary><p class="hint">选择一个群或私聊查看进度。每批最多 10 条记录，模型填写谁做了什么和明确表达的感受。通过筛选的概括（可含有来源的 QQ 昵称）可供其他群或会话召回，也可在这里撤销。</p><p id="extraction-policy" class="hint"></p><p id="extraction-status" role="status">请选择单个对话范围。</p><button id="extraction-run" type="button" disabled>压缩下一批 / 重试</button><div id="extraction-candidates"></div></details>
+<details><summary>记忆关系图</summary><p class="hint">显示当前页记忆；连线表示同一范围内的时间顺序，大小表示当前权重。</p><div id="memory-graph" class="memory-graph" role="group" aria-label="记忆关系图"></div><p id="memory-graph-selection" role="status"></p></details>
+<details><summary>叙事记忆字符整理</summary><p id="narrative-capacity" role="status"></p><form id="narrative-form"><label>容量上限（字符，0 表示不限）<input id="narrative-max" type="number" min="0" max="10000000" value="0" required></label><label>警告阈值（字符）<input id="narrative-warn" type="number" min="1" max="10000000" value="60000" required></label><label class="check"><input id="narrative-auto" type="checkbox">满额后自动整理</label><button type="button" id="narrative-save-policy">保存容量设置</button><label>手动整理目标（字符）<input id="narrative-target" type="number" min="0" max="10000000" value="48000" required></label><button>预览整理</button></form><pre id="narrative-preview"></pre><button id="narrative-apply" type="button" disabled>执行预览的整理</button></details>
+<p id="memory-count" role="status"></p><p id="memory-capacity" role="status"></p><div id="memories"></div>
+<div class="actions"><button id="memory-previous" type="button" class="secondary">上一页</button><button id="memory-next" type="button" class="secondary">下一页</button><button id="memory-preview" type="button" class="secondary">预览所选范围召回</button><button id="memory-compact" type="button" class="secondary">整理容量</button><button id="export-memory" type="button" class="secondary">下载筛选结果</button></div>
+<div id="memory-recall" hidden><h3>召回预览</h3><p id="memory-recall-info"></p><pre id="memory-recall-content"></pre></div></section>
+<section id="budget"><span class="eyebrow">02 / BUDGET</span><h2>额度保护</h2><div id="account-quota"></div><form id="quota-form"><label>保护模式<select id="quota-mode"><option value="percentage">账号百分比</option><option value="fixed">固定每日 Token</option></select></label><label>短周期保留百分比（通常为 5 小时）<input type="number" id="quota-primary" min="0" max="100" required></label><label>长周期保留百分比（通常为一周）<input type="number" id="quota-secondary" min="0" max="100" required></label><button>保存保护模式</button></form><p class="hint">百分比模式无法读取额度时暂停；固定模式按每日 Token 上限执行。每周上限对两种模式均生效。</p><h3>SurfCore 今日统计</h3><div class="metrics"><div><small>已报告 Token</small><strong id="used">—</strong></div><div><small>调用次数</small><strong id="turns">—</strong></div><div><small>未报告用量的调用</small><strong id="unknown">—</strong></div></div>
+<p id="budget-date"></p><progress id="usage-progress" max="1" value="0"></progress>
+<form id="budget-form"><label class="check"><input id="tracking" type="checkbox" checked>每日仅统计，不限制</label><label>每日 Token 上限<input id="limit" type="number" min="1" max="1000000000" step="1" disabled></label><label class="check"><input id="weekly-tracking" type="checkbox" checked>每周仅统计，不限制</label><label>每周 Token 上限<input id="weekly-limit" type="number" min="1" max="10000000000" step="1" disabled></label><button>保存额度</button></form><p class="hint">每日上限在固定模式生效；每周上限独立生效。未报告用量不代表零消费，单次调用可能超过上限。</p></section>
+<section id="language"><span class="eyebrow">03 / EXPRESSION</span><h2>语言与语音</h2><div class="columns"><form id="language-form"><h3>回复语言</h3><label>角色使用的语言<select id="language-select"></select></label><button>保存语言</button><p class="hint">保存后用于该角色之后的桥接模型调用。</p></form>
+<form id="voice-form"><h3>角色语音</h3><label>服务<select id="pack"></select></label><button id="load-voices" type="button" class="secondary">加载音色</button><label>音色<select id="voice" disabled></select></label>
+<div id="voice-style" hidden><label>声音与语气指令<textarea id="voice-instruction" maxlength="500" rows="3"></textarea></label><div class="voice-numbers"><label>种子<input id="voice-seed" type="number" min="0" max="2147483647" step="1" value="42"></label><label>指令强度<input id="voice-cfg" type="number" min="1" max="3" step="0.1" value="1"></label></div></div>
+<label id="voxd-style" hidden>voxd 风格 JSON<textarea id="voice-native-style" maxlength="2048" rows="3" placeholder="{}"></textarea></label>
+<label>试听文本（可选）<textarea id="sample-text" maxlength="300" placeholder="留空使用默认短句"></textarea></label>
+<details><summary>在线备选</summary><label class="check"><input id="voice-online" type="checkbox">允许本地失败时使用此角色绑定的在线音色</label><button id="load-fallback" type="button" class="secondary">加载云端音色</button><label>备选音色<select id="fallback-voice"><option value="">未绑定</option></select></label></details>
+<p id="voice-state" class="hint" role="status"></p><div class="actions"><button id="save-voice">保存语音</button><button id="sample" type="button" class="secondary">试听</button><button id="sample-cancel" type="button" class="secondary" title="取消试听" aria-label="取消试听" disabled>&#215;</button></div><audio id="audio" controls hidden></audio><p class="hint">本机试听，不向 QQ 发送。</p></form></div></section>
+<section id="voice-manager"><h2>语音服务管理</h2><form id="voice-directory-form"><label>管理服务<select id="managed-pack"><option value="breeze">Breeze · 7860</option><option value="local">本地包 · 8765 / 9880</option><option value="cloud">云端包 · 8767</option></select></label><label>已安装引擎目录<input id="voice-dir" required></label><div id="breeze-config"><label>本机地址<input id="voice-base" type="url" value="http://127.0.0.1:7860"></label><label>GGUF 模型路径<input id="voice-model"></label><label class="check"><input id="voice-cpu" type="checkbox">强制 CPU</label></div><button>保存目录并检测</button></form><div class="actions"><button id="voice-refresh" type="button" class="secondary">刷新服务状态</button><button id="voice-start" type="button">启动服务</button><button id="voice-stop" type="button" class="secondary">停止本页启动的服务</button><button id="voice-check" type="button">运行语音自检</button></div><pre id="voice-diagnostics"></pre><p class="hint">停止只作用于本控制台持有的进程。Breeze 使用已下载的 Windows 引擎和 GGUF；voxd 包仍使用包内 Python、配置和模型。</p><p><a href="https://github.com/Mieksido/surfvoicelocal" target="_blank" rel="noreferrer">原版本地包</a> · <a href="https://github.com/Mieksido/surfvoicecloud" target="_blank" rel="noreferrer">原版云端包</a> · <a href="https://github.com/HoppouAI/Breeze-TTS-2.cpp" target="_blank" rel="noreferrer">Breeze</a></p></section>
+</div><footer>SurfCore for Codex · Local workspace</footer>
+</main></body></html>
