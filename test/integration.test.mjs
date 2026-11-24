@@ -93,7 +93,8 @@ test('role isolation, local sharing, time filtering, and duplicate/unauthorized 
     });
     const responses = output.trim().split('\n').map(JSON.parse);
     assert.equal(responses[0].result.serverInfo.name, 'surfcore-roles');
-    assert.equal(responses[1].result.tools.length, 5);
+    assert.equal(responses[1].result.tools.length, 6);
+    assert.ok(responses[1].result.tools.some(({ name }) => name === 'open_surfcore_panel'));
     const context = JSON.parse(responses[2].result.content[0].text);
     assert.deepEqual(context.recent, []);
     assert.equal(context.shared[0].note, '林独有的事实');

@@ -1,4 +1,4 @@
-# SurfCore for Codex 0.1.8
+# SurfCore for Codex 0.1.8.1
 
 > **鸣谢**　感谢原版 [SurfCore](https://github.com/Mieksido/surfcore) 的作者 [Mieksido](https://github.com/Mieksido) 和所有贡献者。
 
@@ -85,9 +85,13 @@ node plugin/src/cli.mjs qq --send
 
 源码支持 QQ 图片、依赖 OneBot `fetch_ptt_text` 的语音转写，以及对短于三分钟的视频抽帧和音轨识别；QQ 原生转写失败时可回退到本地 Whisper。资源获取失败、静音或识别器不可用时会明确标注。QQ 语音发送目前已通过模拟网关验收，接收端播放待实测。视频抽帧和本地识别需要 ffmpeg，可使用 `SURFCORE_FFMPEG` 指定路径。B 站和桌宠尚未移植。
 
+发送模式下，模型可按需读取当前会话最近 15 条消息和已核实的引用。群聊读取同时要求群白名单与本次授权。QQ 官方图片链接过期时，桥接可尝试刷新下载凭据，下载中断时会在符合条件的官方地址上续传。
+
+本地表情收藏按机器人账号、角色和会话隔离，所有角色共用 200 MB 原图容量。模型可以给自己的收藏写备注、发送或删除。GIF、APNG 和动态 WebP 以有序画格预览，完整预览后才可收藏。动图预览依赖带 Pillow 的 Python，可用 `SURFCORE_STICKER_PYTHON` 指定解释器。
+
 ## 本地控制台
 
-双击 `Start-Panel.cmd`，复制终端里的完整地址到浏览器。启动脚本和 `node plugin/src/cli.mjs panel` 均由系统自动分配空闲端口；关闭终端即停止面板。需要固定端口时可设置 `SURFCORE_PANEL_PORT`。
+在 Windows 上，点击 Codex 插件详情里的「立即试用」，或双击 `Start-Panel.cmd`，即可在默认浏览器打开控制台。两种方式共用本机后台进程，退出启动命令后控制台仍可使用。需要前台运行时，可用 `node plugin/src/cli.mjs panel`，再复制终端显示的完整地址到浏览器。默认使用系统分配的空闲端口，可用 `SURFCORE_PANEL_PORT` 指定。
 
 - 角色：创建、编辑、激活角色，保存存档或从存档恢复人格。恢复人格时保留后续记忆。
 - 记忆：按角色与记录范围检索、分页查看，添加角色手记，强化或取消强化；强化只影响原作用域。召回预览依据实际会话规则。
@@ -116,6 +120,7 @@ node plugin/src/cli.mjs qq --send
 - `SURFCORE_FFMPEG` 可指定 FFmpeg，默认从 PATH 调用 `ffmpeg`。语音和视频转写及开头定位可显式配置 `SURFCORE_WHISPER_CLI` 和 `SURFCORE_WHISPER_MODEL`。读取普通下载音频无需额外转换程序，使用外部转换程序时由 `SURFCORE_QQ_MUSIC_CONVERTER` 指定其路径。
 - 下载的自动学唱音源、转换副本、生成音频和符合条件的普通说话临时残留共享 500 MB 缓存预算。超限后等正在使用音频的任务结束再清理。手工入库的录音、训练素材和模型单独保留。
 - Git 仓库只需要源码与合成测试。角色数据、日记、记忆导出、QQ 配置、日志、数据库及伴随文件、模型和授权音频应留在本地。控制台完整启动地址的 `#access=` 片段是本地访问凭据。记忆导出可能包含所选范围的原文和账号标识。
+- 如果在同一台机器管理多个机器人，请为每个账号设置各自的 `SURFCORE_DATA_DIR`，分别保存角色记忆、桥接配置和恢复状态。
 - QQ 回复、记忆提炼及日记回看会把所需上下文提交给配置的 Codex 模型。日记回看使用当前角色保存的近期对话，触发条件是打开控制台。跨会话摘要的来源可在本机面板预览，已撤销和明确私密的条目不会参与跨会话召回。
 
 ## 验证

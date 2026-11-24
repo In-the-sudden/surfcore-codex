@@ -289,6 +289,27 @@ test('song operation replies respect audience, role, task state, and cancellatio
       assert.equal(errors.filter(({ name }) => name === 'AbortError').length, 0);
     });
 
+    await t.test('the QQ model receives only the available conversation operations', async () => {
+      for (const canReadQuote of [true, false]) {
+        let instructions;
+        await runCodex({ role: { id: 'lin', persona: '测试角色' }, message: '回顾一下', probe: true, mediaPlan: true,
+          conversationTools: { canReadQuote, canReadHistory: true, canManage: true, stickerCount: 1,
+            stickers: [{ choice: 1, label: '表示同意' }] },
+          launch: () => ({
+            initialize: async () => {},
+            start: async (_path, prompt) => { instructions = prompt; return 'test-thread'; },
+            turn: async () => '{}',
+            close() {},
+          }),
+        });
+        assert.equal(instructions.includes('"source":"quoted"'), canReadQuote);
+        assert.match(instructions, /"source":"history"/);
+        assert.match(instructions, /"saveSticker"/);
+        assert.match(instructions, /"removeSticker"/);
+        assert.match(instructions, /"localSticker"/);
+      }
+    });
+
     await t.test('operation mode supplies trusted status instructions and disables all media planning', async () => {
       let cwd, instructions, input, closed = false;
       const role = { id: 'lin', persona: '林的人设。', narrative: [{ text: '同一会话记忆', clarity: '清晰' }],

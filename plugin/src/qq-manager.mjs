@@ -122,7 +122,7 @@ export function createQQManager({ runner = startOneBot, generate = runCodex, loa
         if (event.type === 'connected') { state = 'connected'; note('OneBot WebSocket 已连接。'); }
         else if (event.type === 'error') note('处理失败：' + event.message);
         else if (event.type === 'preview') note('预览 · ' + (event.kind === 'group' ? '群' : '私聊') + '尾号 ' + event.contact.slice(-4) + '：' + event.reply);
-        else if (event.type === 'sent') note((event.format === 'record' ? 'OneBot 已接受语音' : event.format === 'face' ? 'OneBot 已接受收藏表情' : '已发送') +
+        else if (event.type === 'sent') note((event.format === 'record' ? 'OneBot 已接受语音' : event.format === 'face' ? 'OneBot 已接受收藏表情' : event.format === 'local-sticker' ? 'OneBot 已接受本地表情' : '已发送') +
           ' · ' + (event.kind === 'group' ? '群' : '私聊') + '尾号 ' + event.contact.slice(-4));
         else if (event.type === 'voiceFallback') note('语音合成不可用，改用文字：' + event.reason);
         else if (event.type === 'voiceVerified') note('OneBot 回读确认是语音条。');

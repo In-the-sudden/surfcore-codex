@@ -2,32 +2,49 @@ import { activeCharacter, characterContext, addMemory, cleanText, dataDirectory,
 import { UnreadPool, evaluateWake, validateSocialDecision } from './social.mjs';
 import { withRoleStorageLock } from './role-storage.mjs';
 import { join } from 'node:path';
-import { parseMediaSegments, resolveMessageMedia } from './qq-media.mjs';
+import { MAX_IMAGE_BYTES, parseMediaSegments, resolveMessageMedia } from './qq-media.mjs';
 import { autoExtractMemory } from './memory-extraction.mjs';
 import { MEMORY_INTERVAL_MS } from './memory-daily-policy.mjs';
 import { readCharacterPreferences } from './settings.mjs';
 import { synthesize } from './voice.mjs';
 import { createGroupBurstCollector } from './group-burst.mjs';
 import { voiceCache } from './voice-cache.mjs';
+import { runConversationTurn } from './qq-conversation-turn.mjs';
+import { createConversationReader } from './qq-history.mjs';
+import { localStickers } from './qq-local-stickers.mjs';
 
-const maxRecordJsonBytes = 42 * 1024 * 1024;
+const maxHistoryJsonBytes = 2 * 1024 * 1024;
+const oneBotJsonLimits = new Map([
+  ['get_record', 42 * 1024 * 1024],
+  ['get_image', Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 64 * 1024],
+  ['get_rkey', 64 * 1024],
+  ['get_msg', maxHistoryJsonBytes],
+  ['get_group_msg_history', maxHistoryJsonBytes],
+  ['get_friend_msg_history', maxHistoryJsonBytes],
+]);
 
 export async function readRecordJson(response) {
+  return readOneBotJson(response, 'get_record');
+}
+
+export async function readOneBotJson(response, action) {
+  const limit = oneBotJsonLimits.get(action);
+  if (!limit) return response.json();
   const declared = Number(response.headers.get('content-length') || 0);
-  if (declared > maxRecordJsonBytes) {
+  if (declared > limit) {
     if (response.body) await response.body.cancel().catch(() => {});
-    throw new Error('OneBot get_record 响应过大。');
+    throw new Error('OneBot ' + action + ' 响应过大。');
   }
   if (!response.body) return response.json();
   const chunks = [];
   let size = 0;
   for await (const chunk of response.body) {
     size += chunk.length;
-    if (size > maxRecordJsonBytes) throw new Error('OneBot get_record 响应过大。');
+    if (size > limit) throw new Error('OneBot ' + action + ' 响应过大。');
     chunks.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(chunks, size).toString('utf8')); }
-  catch { throw new Error('OneBot get_record 响应格式无效。'); }
+  catch { throw new Error('OneBot ' + action + ' 响应格式无效。'); }
 }
 
 function groupConsentAction(text) {
@@ -101,6 +118,11 @@ function songPerformanceNote(performance) {
     '的' + portion + timing + '。这条记录只代表实际发送的片段。\n' + lyrics + (uncertainty ? '\n' + uncertainty : '');
 }
 
+function isFriendConversation(incoming) {
+  return incoming.kind === 'private' && (incoming.subType == null || incoming.subType === 'friend') &&
+    !incoming.privateGroup;
+}
+
 function parseMessage(event, { owner, selfId, admins, groups, socialMode = false, allowBareMention = false }) {
   if (event?.post_type !== 'message' || String(event.self_id) !== selfId) return null;
   const sender = String(event.user_id);
@@ -122,13 +144,17 @@ function parseMessage(event, { owner, selfId, admins, groups, socialMode = false
   const { media } = parsed;
   const text = parsed.text || (allowBareMention && socialMode && atBot ? '[@我]' : '');
   if (!text || text.length > 2_000 || !/^-?[0-9]{1,20}$/.test(String(event.message_id ?? ''))) return null;
+  const quoted = segments.find((segment) => segment?.type === 'reply')?.data?.id;
+  const quoteId = typeof quoted === 'number' || (typeof quoted === 'string' && /^-?\d+$/.test(quoted)) ? Number(quoted) : 0;
   const nick = event.sender?.nickname;
   const senderNickname = typeof nick === 'string' && nick.length <= 128 && !/[\p{C}]/u.test(nick) ? nick.trim() : '';
   return { kind, contact, messageId: String(event.message_id), text, media, senderId: sender,
-    ...(senderNickname && { senderNickname }), atBot };
+    ...(senderNickname && { senderNickname }), ...(event.sub_type && { subType: event.sub_type }),
+    ...(kind === 'private' && (Number(event.group_id) > 0 || Number(event.sender?.group_id) > 0) && { privateGroup: true }),
+    ...(Number.isSafeInteger(quoteId) && quoteId !== 0 && { quotedMessageId: quoteId }), atBot };
 }
 
-export function createMessageHandler({ owner, selfId, admins = [], groups = [], generate, deliver, prepareReplyVoice = null, chooseReplyFormat = null, resolveReplySong = null, audioCache = null, loadReplyFaces = null, sendReplyFace = null, groupBursts = false, resolveMedia = async (item) => ({ text: item.text.replace(/\[图片(\d+)\]/g, '[图片$1获取失败]').replaceAll('[语音]', '[语音转写不可用]').replaceAll('[视频]', '[视频未加载]'), images: [] }), autoExtract = null, simulated = false, persistUnread = false, record = true, social = { enabled: false }, askGroupConsent = false, shouldContinue = () => true, generationToken = () => 0, unreadStateFile = null, stateLock = withRoleStorageLock, scheduleTimer = setTimeout, cancelTimer = clearTimeout, waitMinMs = 5_000, onError = () => {}, onExtraction = () => {}, onGroupAuthorization = () => {} }) {
+export function createMessageHandler({ owner, selfId, admins = [], groups = [], generate, deliver, prepareReplyVoice = null, chooseReplyFormat = null, resolveReplySong = null, audioCache = null, loadReplyFaces = null, sendReplyFace = null, readConversation = null, stickerLibrary = null, sendLocalSticker = null, groupBursts = false, resolveMedia = async (item) => ({ text: item.text.replace(/\[图片(\d+)\]/g, '[图片$1获取失败]').replaceAll('[语音]', '[语音转写不可用]').replaceAll('[视频]', '[视频未加载]'), images: [] }), autoExtract = null, simulated = false, persistUnread = false, record = true, social = { enabled: false }, askGroupConsent = false, shouldContinue = () => true, generationToken = () => 0, unreadStateFile = null, stateLock = withRoleStorageLock, scheduleTimer = setTimeout, cancelTimer = clearTimeout, waitMinMs = 5_000, onError = () => {}, onExtraction = () => {}, onGroupAuthorization = () => {} }) {
   const withAudioCache = (work) => audioCache ? audioCache.run(work) : work();
   const seen = new Set();
   const unreadPool = new UnreadPool({ stateFile: !simulated && persistUnread && social.enabled && unreadStateFile ? unreadStateFile : null, lock: stateLock });
@@ -400,10 +426,22 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
     const faces = !requestedText && loadReplyFaces && sendReplyFace ? await availableFaces(role.id) : [];
     const faceOptions = faces.map(({ label }, index) => ({ choice: index + 1, label }));
     if (!isCurrent(token, authGeneration, autonomous)) return null;
-    const mediaPlan = Boolean(chooseReplyFormat || resolveReplySong || faceOptions.length);
-    const generated = await generate({ role, message, mediaImages: resolved.images, decisionMode: autonomous,
+    const stickerScope = selfId + ':' + scope;
+    const toolsCurrent = () => (!isGroup || social.enabled) && isCurrent(token, authGeneration, isGroup);
+    const useConversationTools = !simulated && (readConversation || stickerLibrary) &&
+      (isGroup || isFriendConversation(incoming)) && toolsCurrent();
+    // A role change or a bridge authorization change cancels work before a lookup, write, or send.
+    const canUseTools = async () => toolsCurrent() && (await activeCharacter()).id === role.id && toolsCurrent();
+    const mediaPlan = Boolean(chooseReplyFormat || resolveReplySong || faceOptions.length || useConversationTools);
+    const generation = { role, message, mediaImages: resolved.images, decisionMode: autonomous,
       ...(mediaPlan ? { mediaPlan, songPlan: Boolean(resolveReplySong) } : {}),
-      ...(faceOptions.length ? { faceOptions } : {}) });
+      ...(faceOptions.length ? { faceOptions } : {}) };
+    const conversation = useConversationTools ? await runConversationTurn({
+      generate, generation, incoming, scope: stickerScope, resolved, readConversation, resolveMedia, stickerLibrary,
+      canUseTools, current: toolsCurrent, onError,
+    }) : { generated: await generate(generation), localOptions: [] };
+    if (!conversation) return null;
+    const { generated, localOptions } = conversation;
     const plan = mediaPlan ? parseReplyPlan(generated) : null;
     const songRequest = resolveReplySong && plan?.action === 'sing' && plan.song;
     const decision = songRequest ? { action: 'speak', text: '这段暂时唱不了。' }
@@ -423,7 +461,20 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
     let performance = null;
     let learnSong = null;
     let faceSent = false;
-    const face = plan?.action === 'speak' && typeof plan.text === 'string' && plan.text.trim() &&
+    const localChoice = !requestedText && sendLocalSticker && plan?.action === 'speak' &&
+      Number.isInteger(plan.localSticker) && localOptions[plan.localSticker - 1];
+    if (localChoice && await canUseTools()) {
+      let asset;
+      try { asset = await stickerLibrary.read(role.id, stickerScope, localChoice.id); }
+      catch (error) { onError(error); }
+      if (!await canUseTools()) return null;
+      if (asset) {
+        await sendLocalSticker(incoming.contact, incoming.kind, asset);
+        faceSent = true;
+        reply = '[本地表情：' + asset.label + ']';
+      }
+    }
+    const face = !faceSent && plan?.action === 'speak' && typeof plan.text === 'string' && plan.text.trim() &&
       Number.isInteger(plan.face) && faces[plan.face - 1];
     if (face) {
       const stillEnabled = (await availableFaces(role.id)).some(({ id }) => id === face.id);
@@ -463,7 +514,7 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
           stage: 'resolve', ...operation });
       }
       if (!await canDeliver()) return null;
-    } else if (!face && prepareReplyVoice && (requestedText || chooseReplyFormat) &&
+    } else if (!faceSent && !face && prepareReplyVoice && (requestedText || chooseReplyFormat) &&
         (!mediaPlan || [...reply].length <= speechCharacterLimit)) {
       audio = await prepareReplyVoice(role.id, reply, mediaPlan ? speechTimeoutMs : undefined);
       if (!await canDeliver()) return null;
@@ -502,7 +553,7 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
       cancelWait(scope);
       await unreadPool.flush();
     }
-    if (askGroupConsent && social.enabled && groups.length > 0 && incoming.kind === 'private' &&
+    if (askGroupConsent && social.enabled && groups.length > 0 && isFriendConversation(incoming) &&
         incoming.contact === owner && !consentPrompted && isCurrent(token, authGeneration, false)) {
       await deliver(owner, '如果允许我在本次桥接登录期间参与已配置的白名单群，请回复“同意群聊”。回复“撤销群聊”可立即取消；退出或重启后授权失效，白名单外群始终不处理。', 'private');
       consentPrompted = true;
@@ -518,7 +569,7 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
     if (!incoming || !shouldContinue()) return null;
     const eventKey = incoming.kind + ':' + incoming.contact + ':' + incoming.messageId;
     if (seen.has(eventKey)) return null;
-    const consentAction = incoming.kind === 'private' && incoming.senderId === owner ? groupConsentAction(incoming.text) : null;
+    const consentAction = isFriendConversation(incoming) && incoming.senderId === owner ? groupConsentAction(incoming.text) : null;
     const queueFull = queued >= 8;
     if (queueFull && consentAction !== 'revoke') return null;
     seen.add(eventKey);
@@ -646,7 +697,7 @@ export async function startOneBot({ owner, selfId, admins = [], groups = [], wsU
       body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout),
     });
     if (!response.ok) throw new Error('OneBot ' + action + ' 失败（HTTP ' + response.status + '）。');
-    const result = action === 'get_record' ? await readRecordJson(response) : await response.json();
+    const result = await readOneBotJson(response, action);
     if (result?.retcode !== 0 || (requireOk && result.status !== 'ok')) throw new Error('OneBot ' + action + ' 失败。');
     return result.data;
   }
@@ -672,7 +723,25 @@ export async function startOneBot({ owner, selfId, admins = [], groups = [], wsU
       }
       onEvent({ type: 'sent', kind, contact, format: 'face' });
     } : null,
-    resolveMedia: (incoming) => resolveMessageMedia(incoming, oneBotAction),
+    resolveMedia: (incoming, options) => resolveMessageMedia(incoming, oneBotAction, options),
+    readConversation: send && autonomousMedia ? (incoming, source) =>
+      createConversationReader({ ...incoming, selfId }, oneBotAction)(source) : null,
+    stickerLibrary: send && autonomousMedia ? localStickers : null,
+    sendLocalSticker: send && autonomousMedia ? async (contact, kind, asset) => {
+      const isGroup = kind === 'group';
+      const result = await oneBotAction(isGroup ? 'send_group_msg' : 'send_private_msg', {
+        [isGroup ? 'group_id' : 'user_id']: Number(contact),
+        message: [{ type: 'image', data: {
+          file: 'base64://' + asset.bytes.toString('base64'),
+          sub_type: 1,
+          summary: asset.extension === 'gif' ? '[动画表情]' : '[表情]',
+        } }],
+      }, { timeout: 60_000, requireOk: true });
+      if (!Number.isSafeInteger(result?.message_id) || result.message_id === 0) {
+        throw new Error('QQ 本地表情缺少发送回执，请在 QQ 中查看。');
+      }
+      onEvent({ type: 'sent', kind, contact, format: 'local-sticker' });
+    } : null,
     chooseReplyFormat: send && autonomousMedia ? async ({ role, message, reply, kind }) => {
       const timeout = AbortSignal.timeout(12_000);
       const result = await generate({

@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 import { activateCharacter, characterContext, createCharacter, listCharacters, remember } from './store.mjs';
+import { openSurfcorePanel } from './panel-launcher.mjs';
 
 const protocolVersions = new Set(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const string = { type: 'string' };
@@ -14,6 +15,7 @@ async function getCharacterContext() {
 }
 
 const tools = [
+  { name: 'open_surfcore_panel', description: '仅在用户要求打开 SurfCore for Codex 控制台时调用。在本机启动或复用控制台，并用默认浏览器打开。', inputSchema: object(), run: openSurfcorePanel },
   { name: 'list_characters', description: '列出角色和当前角色 ID', inputSchema: object(), run: listCharacters, readOnly: true },
   { name: 'get_character_context', description: '读取当前角色卡和该角色在 Codex 的记忆', inputSchema: object(), run: getCharacterContext, readOnly: true },
   { name: 'activate_character', description: '切换到已有角色', inputSchema: object({ id: string }, ['id']), run: ({ id }) => activateCharacter(id) },

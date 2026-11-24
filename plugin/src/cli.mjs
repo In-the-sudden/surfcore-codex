@@ -3,11 +3,15 @@ import { activateCharacter, createCharacter, listCharacters, remember } from './
 import { createMessageHandler, sampleEvent, startOneBot } from './bridge.mjs';
 import { runCodex } from './codex.mjs';
 import { startPanel } from './panel.mjs';
+import { openSurfcorePanel } from './panel-launcher.mjs';
 
 const [command, ...args] = process.argv.slice(2);
 try {
   let result;
   switch (command) {
+    case 'panel-open':
+      await openSurfcorePanel();
+      break;
     case 'panel': {
       const panel = await startPanel({ maintainVoiceCache: true });
       console.log('用桌面浏览器打开控制台：' + panel.url);
@@ -56,7 +60,7 @@ try {
       break;
     }
     default:
-      throw new Error('命令：panel | list | activate ID | create ID 人设文件 | remember ID 文字 | demo 文字 | demo-codex 文字 | probe | qq [--send]');
+      throw new Error('命令：panel-open | panel | list | activate ID | create ID 人设文件 | remember ID 文字 | demo 文字 | demo-codex 文字 | probe | qq [--send]');
   }
   if (result !== undefined) console.log(typeof result === 'string' ? result : JSON.stringify(result, null, 2));
 } catch (error) {

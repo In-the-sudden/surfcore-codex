@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFile, copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dataDirectory, roleStorageDirectory, withRoleStorageLock } from './role-storage.mjs';
+import { dataDirectory, readActiveRoleId, roleStorageDirectory, withRoleStorageLock } from './role-storage.mjs';
 import { assessMemoryPrivacy, readMemoryPrivacy, shareSummaryIsUsable, defaultSharedSummary, sourcedNickname } from './memory-privacy.mjs';
 import { memoryDay, memoryCandidateChars, dailyMemoryLimit } from './memory-daily-policy.mjs';
 
@@ -67,8 +67,7 @@ async function loadPersona(id) {
 
 async function activeCharacter() {
   await init();
-  const pointer = await optionalRead(current);
-  const id = pointer ? JSON.parse(pointer.trimEnd().split('\n').at(-1)).id : 'lin';
+  const id = await readActiveRoleId(dirname(current));
   const persona = await loadPersona(id);
   return { id, name: persona.split(/\r?\n/)[0].replace(/^#+\s*/, ''), persona };
 }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { copyFile, cp, lstat, mkdir, open, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
@@ -27,6 +27,16 @@ export function roleStorageDirectory() {
     if (!statSync(directory).isDirectory()) throw new Error();
   } catch { throw new Error('角色存储目录不可用，请检查磁盘或恢复原目录。'); }
   return directory;
+}
+
+export async function readActiveRoleId(directory) {
+  try {
+    const pointer = await readFile(join(directory, 'active.jsonl'), 'utf8');
+    return pointer ? JSON.parse(pointer.trimEnd().split('\n').at(-1)).id : 'lin';
+  } catch (error) {
+    if (error.code === 'ENOENT') return 'lin';
+    throw error;
+  }
 }
 
 export async function withRoleStorageLock(work) {
