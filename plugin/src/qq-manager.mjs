@@ -8,7 +8,7 @@ import { runCodex } from './codex.mjs';
 import { createQQFaceSettings, readQQFaces } from './qq-faces.mjs';
 
 const file = join(dataDirectory, 'qq-settings.json');
-const defaults = { owner: '', selfId: '', admins: [], groups: [], wsUrl: 'ws://127.0.0.1:3001', httpUrl: 'http://127.0.0.1:3000', social: { enabled: false, botName: '', botNames: [], keywords: [], speakerIds: [], probability: 0 } };
+const defaults = { owner: '', selfId: '', admins: [], groups: [], wsUrl: 'ws://127.0.0.1:3001', httpUrl: 'http://127.0.0.1:3000', imageDelayCompensation: true, social: { enabled: false, botName: '', botNames: [], keywords: [], speakerIds: [], probability: 0 } };
 const idPattern = /^[1-9][0-9]{3,14}$/;
 
 function validate(config) {
@@ -28,6 +28,9 @@ function validate(config) {
       throw new Error('OneBot 地址只接受本机 127.0.0.1，令牌需单独填写。');
     }
   }
+  const imageDelayCompensation = config.imageDelayCompensation === undefined
+    ? defaults.imageDelayCompensation : config.imageDelayCompensation;
+  if (typeof imageDelayCompensation !== 'boolean') throw new Error('图片慢加载补偿设置无效。');
   const social = config.social && typeof config.social === 'object' ? config.social : defaults.social;
   if (typeof social.enabled !== 'boolean' || typeof (social.botName ?? '') !== 'string' || (social.botName ?? '').length > 40
     || (social.botNames !== undefined && (!Array.isArray(social.botNames) || social.botNames.length > 20
@@ -41,7 +44,7 @@ function validate(config) {
   }
   const names = social.botNames ?? (social.botName?.trim() ? [social.botName] : []);
   const botNames = [...new Set(names.map((name) => name.trim()))];
-  return { owner: config.owner, selfId: config.selfId, admins: [...new Set(config.admins)], groups: [...new Set(config.groups)], wsUrl: config.wsUrl, httpUrl: config.httpUrl,
+  return { owner: config.owner, selfId: config.selfId, admins: [...new Set(config.admins)], groups: [...new Set(config.groups)], wsUrl: config.wsUrl, httpUrl: config.httpUrl, imageDelayCompensation,
     social: { enabled: social.enabled, botName: botNames[0] ?? '', botNames, keywords: [...new Set(social.keywords ?? [])], speakerIds: [...new Set(social.speakerIds ?? [])], probability: social.probability ?? 0 } };
 }
 
@@ -86,7 +89,7 @@ export function createQQManager({ runner = startOneBot, generate = runCodex, loa
     if (social && social.botNames === undefined && social.botName === current.social.botName) {
       social = { ...social, botNames: current.social.botNames };
     }
-    const config = validate({ ...input, social });
+    const config = validate({ imageDelayCompensation: current.imageDelayCompensation, ...input, social });
     await mkdir(dataDirectory, { recursive: true });
     const temp = file + '.' + randomUUID() + '.tmp';
     await writeFile(temp, JSON.stringify(config, null, 2), { mode: 0o600 });
@@ -125,6 +128,7 @@ export function createQQManager({ runner = startOneBot, generate = runCodex, loa
         else if (event.type === 'sent') note((event.format === 'record' ? 'OneBot 已接受语音' : event.format === 'face' ? 'OneBot 已接受收藏表情' : event.format === 'local-sticker' ? 'OneBot 已接受本地表情' : '已发送') +
           ' · ' + (event.kind === 'group' ? '群' : '私聊') + '尾号 ' + event.contact.slice(-4));
         else if (event.type === 'voiceFallback') note('语音合成不可用，改用文字：' + event.reason);
+        else if (event.type === 'voiceSynthesisIncomplete') note('明确语音请求的合成尝试未完成：' + event.reason);
         else if (event.type === 'voiceVerified') note('OneBot 回读确认是语音条。');
         else if (event.type === 'voiceUnverified') note('OneBot 已接受语音，暂未回读确认。');
         else if (event.type === 'group-authorization') groupAuthorized = event.authorized === true;

@@ -54,11 +54,6 @@ function groupConsentAction(text) {
   return null;
 }
 
-function voiceRequestText(text) {
-  const command = text.match(/^(?:\/语音|(?:请)?(?:用语音回复(?:我)?|发(?:一?条)?语音))(?:(?:[：:]|\s+)\s*([\s\S]+)|[。！？!?]*)$/u);
-  return command ? command[1]?.trim() || '请用一句话回应当前对话。' : null;
-}
-
 function parseReplyPlan(value) {
   if (typeof value !== 'string') return value;
   try { return JSON.parse(value); } catch { return null; }
@@ -72,6 +67,39 @@ function privateReplyText(value, plan) {
 
 const speechCharacterLimit = 15;
 const speechTimeoutMs = 4_000;
+const requestedSpeechTimeoutMs = 2 * speechTimeoutMs;
+
+function speakPlanText(value) {
+  const plan = parseReplyPlan(value);
+  return plan?.action === 'speak' && typeof plan.text === 'string' ? plan.text.trim().slice(0, 1_000) : '';
+}
+
+async function prepareRequestedVoice(prepare, roleId, reply, canDeliver, onError) {
+  const deadline = performance.now() + requestedSpeechTimeoutMs;
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort(new DOMException('合成超时。', 'TimeoutError'));
+      resolve(null);
+    }, requestedSpeechTimeoutMs);
+  });
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt && !await canDeliver()) break;
+      const remaining = Math.ceil(deadline - performance.now());
+      if (remaining < 100 || controller.signal.aborted) break;
+      try {
+        const audio = await Promise.race([
+          prepare(roleId, reply, remaining, { signal: controller.signal, explicit: true }),
+          timeout,
+        ]);
+        if (Buffer.isBuffer(audio) && audio.length && performance.now() < deadline) return audio;
+      } catch (error) { onError(error); }
+    }
+    return null;
+  } finally { clearTimeout(timer); }
+}
 
 function songErrorText(error) {
   const seen = new Set();
@@ -154,7 +182,7 @@ function parseMessage(event, { owner, selfId, admins, groups, socialMode = false
     ...(Number.isSafeInteger(quoteId) && quoteId !== 0 && { quotedMessageId: quoteId }), atBot };
 }
 
-export function createMessageHandler({ owner, selfId, admins = [], groups = [], generate, deliver, prepareReplyVoice = null, chooseReplyFormat = null, resolveReplySong = null, audioCache = null, loadReplyFaces = null, sendReplyFace = null, readConversation = null, stickerLibrary = null, sendLocalSticker = null, groupBursts = false, resolveMedia = async (item) => ({ text: item.text.replace(/\[图片(\d+)\]/g, '[图片$1获取失败]').replaceAll('[语音]', '[语音转写不可用]').replaceAll('[视频]', '[视频未加载]'), images: [] }), autoExtract = null, simulated = false, persistUnread = false, record = true, social = { enabled: false }, askGroupConsent = false, shouldContinue = () => true, generationToken = () => 0, unreadStateFile = null, stateLock = withRoleStorageLock, scheduleTimer = setTimeout, cancelTimer = clearTimeout, waitMinMs = 5_000, onError = () => {}, onExtraction = () => {}, onGroupAuthorization = () => {} }) {
+export function createMessageHandler({ owner, selfId, admins = [], groups = [], generate, deliver, prepareReplyVoice = null, chooseReplyFormat = null, resolveReplySong = null, audioCache = null, loadReplyFaces = null, sendReplyFace = null, readConversation = null, stickerLibrary = null, sendLocalSticker = null, groupBursts = false, imageDelayCompensation = true, imageReplyDelayMs = 3_000, resolveMedia = async (item) => ({ text: item.text.replace(/\[图片(\d+)\]/g, '[图片$1获取失败]').replaceAll('[语音]', '[语音转写不可用]').replaceAll('[视频]', '[视频未加载]'), images: [] }), autoExtract = null, simulated = false, persistUnread = false, record = true, social = { enabled: false }, askGroupConsent = false, shouldContinue = () => true, generationToken = () => 0, unreadStateFile = null, stateLock = withRoleStorageLock, scheduleTimer = setTimeout, cancelTimer = clearTimeout, waitMinMs = 5_000, onError = () => {}, onExtraction = () => {}, onGroupAuthorization = () => {} }) {
   const withAudioCache = (work) => audioCache ? audioCache.run(work) : work();
   const seen = new Set();
   const unreadPool = new UnreadPool({ stateFile: !simulated && persistUnread && social.enabled && unreadStateFile ? unreadStateFile : null, lock: stateLock });
@@ -410,132 +438,215 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
       }
       if (!unread.length) return null;
     }
-    const requestedText = prepareReplyVoice && voiceRequestText(incoming.text);
-    const resolved = await resolveMedia(incoming);
-    if (!isCurrent(token, authGeneration, autonomous)) return null;
-    const role = await characterContext(scope, { includeShared: !isGroup && incoming.contact === owner });
-    const modelText = requestedText ? voiceRequestText(resolved.text) || resolved.text : resolved.text;
     const burstIds = records.length > 1 ? records.map(({ messageId }) => messageId) : null;
-    const message = autonomous
+    const conversationMessage = (currentMessage) => autonomous
       ? JSON.stringify({ wakeReason, unread: unread
         .filter(({ messageId }) => messageId === incoming.messageId || !burstIds?.includes(messageId))
         .map(({ messageId, text, senderId, at }) => messageId === incoming.messageId
-          ? { messageId, text: modelText, senderId, at, ...(burstIds ? { messageIds: burstIds } : {}) }
+          ? { messageId, text: currentMessage, senderId, at, ...(burstIds ? { messageIds: burstIds } : {}) }
           : { messageId, text: text.replace(/\[图片(\d+)\]/g, '[图片$1未加载]').replaceAll('[语音]', '[语音未转写]').replaceAll('[视频]', '[视频未加载]'), senderId, at }) })
-      : modelText;
-    const faces = !requestedText && loadReplyFaces && sendReplyFace ? await availableFaces(role.id) : [];
-    const faceOptions = faces.map(({ label }, index) => ({ choice: index + 1, label }));
-    if (!isCurrent(token, authGeneration, autonomous)) return null;
+      : currentMessage;
+    const current = () => isCurrent(token, authGeneration, autonomous);
+    let role;
+    const getRole = () => characterContext(scope, { includeShared: !isGroup && incoming.contact === owner });
+    const canDeliver = async () => current() && (await activeCharacter()).id === role.id && current();
     const stickerScope = selfId + ':' + scope;
     const toolsCurrent = () => (!isGroup || social.enabled) && isCurrent(token, authGeneration, isGroup);
-    const useConversationTools = !simulated && (readConversation || stickerLibrary) &&
-      (isGroup || isFriendConversation(incoming)) && toolsCurrent();
+    const mayUseTools = () => !simulated && (isGroup || isFriendConversation(incoming)) && toolsCurrent();
     // A role change or a bridge authorization change cancels work before a lookup, write, or send.
     const canUseTools = async () => toolsCurrent() && (await activeCharacter()).id === role.id && toolsCurrent();
-    const mediaPlan = Boolean(chooseReplyFormat || resolveReplySong || faceOptions.length || useConversationTools);
+    const modelTurn = async (generation, resolved, library) =>
+      mayUseTools() && (readConversation || library) ? runConversationTurn({
+        generate, generation, incoming, scope: stickerScope, resolved, readConversation, resolveMedia,
+        stickerLibrary: library,
+        canUseTools: async () => !generation.signal?.aborted && await canUseTools() && !generation.signal?.aborted,
+        current: toolsCurrent, onError,
+      }) : { generated: await generate(generation), localOptions: [] };
+
+    let initialReply = '';
+    const canStage = imageDelayCompensation && (!isGroup || autonomous) &&
+      incoming.media.some(({ type }) => type === 'image');
+    let pendingMedia;
+    if (canStage) {
+      let imagesReady = false;
+      const imagesDone = Promise.withResolvers();
+      const markImagesReady = () => {
+        imagesReady = true;
+        imagesDone.resolve();
+      };
+      pendingMedia = Promise.resolve(resolveMedia(incoming, { onImagesReady: markImagesReady }));
+      pendingMedia.then(markImagesReady, markImagesReady);
+      let timer;
+      const slow = await Promise.race([
+        imagesDone.promise.then(() => false),
+        new Promise((done) => { timer = setTimeout(() => done(true), imageReplyDelayMs); }),
+      ]).finally(() => clearTimeout(timer));
+      if (slow && current() && !imagesReady) {
+        role = await getRole();
+        if (await canDeliver() && !imagesReady) {
+          const controller = new AbortController();
+          const text = incoming.text.replace(/\[图片(\d+)\]/g, '[图片$1加载中]')
+            .replaceAll('[语音]', '[语音未转写]').replaceAll('[视频]', '[视频未加载]');
+          const provisional = modelTurn({ role, message: conversationMessage(text), mediaImages: [],
+            decisionMode: autonomous, imageReplyPhase: 'initial', mediaPlan: true,
+            voiceRequestAvailable: Boolean(prepareReplyVoice), signal: controller.signal },
+          { images: [] }, null).catch((error) => {
+            if (!controller.signal.aborted) onError(error);
+            return null;
+          });
+          const candidate = await Promise.race([provisional, imagesDone.promise.then(() => null)])
+            .finally(() => controller.abort());
+          const textReply = parseReplyPlan(candidate?.generated)?.voiceRequested === true
+            ? '' : speakPlanText(candidate?.generated);
+          if (textReply && await canDeliver() && !imagesReady) {
+            const prefix = '（图片仍在加载）';
+            const reply = prefix + textReply.slice(0, 1_000 - prefix.length);
+            await deliver(incoming.contact, reply, incoming.kind);
+            initialReply = reply;
+          }
+        }
+      }
+    }
+    const resolved = await (pendingMedia ?? resolveMedia(incoming));
+    if (!current()) return null;
+    if (role && !await canDeliver()) return null;
+    role ??= await getRole();
+    const modelText = resolved.text;
+    const message = conversationMessage(modelText);
+    const faces = !initialReply && loadReplyFaces && sendReplyFace ? await availableFaces(role.id) : [];
+    const faceOptions = faces.map(({ label }, index) => ({ choice: index + 1, label }));
+    if (!current()) return null;
+    const useConversationTools = Boolean(mayUseTools() && (readConversation || stickerLibrary));
+    const mediaPlan = Boolean(prepareReplyVoice || chooseReplyFormat || resolveReplySong || faceOptions.length || useConversationTools);
     const generation = { role, message, mediaImages: resolved.images, decisionMode: autonomous,
       ...(mediaPlan ? { mediaPlan, songPlan: Boolean(resolveReplySong) } : {}),
+      ...(prepareReplyVoice ? { voiceRequestAvailable: true } : {}),
       ...(faceOptions.length ? { faceOptions } : {}) };
-    const conversation = useConversationTools ? await runConversationTurn({
-      generate, generation, incoming, scope: stickerScope, resolved, readConversation, resolveMedia, stickerLibrary,
-      canUseTools, current: toolsCurrent, onError,
-    }) : { generated: await generate(generation), localOptions: [] };
-    if (!conversation) return null;
-    const { generated, localOptions } = conversation;
-    const plan = mediaPlan ? parseReplyPlan(generated) : null;
-    const songRequest = resolveReplySong && plan?.action === 'sing' && plan.song;
-    const decision = songRequest ? { action: 'speak', text: '这段暂时唱不了。' }
-      : autonomous ? validateSocialDecision(generated, { minWaitMs: waitMinMs })
-        : { action: 'speak', text: mediaPlan ? privateReplyText(generated, plan) : generated };
-    if (decision.action !== 'speak') {
-      if (autonomous && isCurrent(token, authGeneration, true)) {
-        await scheduleDecision(scope, records.at(-1), decision, token, authGeneration);
-      }
-      return { character: role.id, action: decision.action, unread: unread.length };
-    }
-    let reply = cleanText(decision.text, 4_000, '回复').slice(0, 1_000);
-    const canDeliver = async () => isCurrent(token, authGeneration, autonomous) &&
-      (await activeCharacter()).id === role.id && isCurrent(token, authGeneration, autonomous);
-    if (!await canDeliver()) return null;
-    let audio = null;
-    let performance = null;
-    let learnSong = null;
-    let faceSent = false;
-    const localChoice = !requestedText && sendLocalSticker && plan?.action === 'speak' &&
-      Number.isInteger(plan.localSticker) && localOptions[plan.localSticker - 1];
-    if (localChoice && await canUseTools()) {
-      let asset;
-      try { asset = await stickerLibrary.read(role.id, stickerScope, localChoice.id); }
-      catch (error) { onError(error); }
-      if (!await canUseTools()) return null;
-      if (asset) {
-        await sendLocalSticker(incoming.contact, incoming.kind, asset);
-        faceSent = true;
-        reply = '[本地表情：' + asset.label + ']';
-      }
-    }
-    const face = !faceSent && plan?.action === 'speak' && typeof plan.text === 'string' && plan.text.trim() &&
-      Number.isInteger(plan.face) && faces[plan.face - 1];
-    if (face) {
-      const stillEnabled = (await availableFaces(role.id)).some(({ id }) => id === face.id);
+    const conversation = initialReply ? await modelTurn({
+      role, message: JSON.stringify({ currentMessage: message, initialReply }), mediaImages: resolved.images,
+      imageReplyPhase: 'followup', mediaPlan: true,
+    }, resolved, stickerLibrary).catch((error) => { onError(error); return null; })
+      : await modelTurn(generation, resolved, stickerLibrary);
+    let reply;
+    if (initialReply) {
       if (!await canDeliver()) return null;
-      if (stillEnabled) {
-        await sendReplyFace(incoming.contact, incoming.kind, face.id);
-        faceSent = true;
-        reply = '[收藏表情：' + face.label + ']';
-      }
-    }
-    if (songRequest) {
-      let operation;
-      try {
-        const song = await resolveReplySong(songRequest, { roleId: role.id });
-        if (typeof song?.text === 'string' && song.text.trim()) reply = cleanText(song.text, 4_000, '点歌回复').slice(0, 1_000);
-        if (Buffer.isBuffer(song?.audio)) {
-          audio = song.audio;
-          performance = song.performance;
+      const followup = speakPlanText(conversation?.generated);
+      if (followup) await deliver(incoming.contact, followup, incoming.kind);
+      reply = followup ? initialReply + '\n' + followup : initialReply;
+    } else {
+      if (!conversation) return null;
+      const { generated, localOptions } = conversation;
+      const plan = mediaPlan ? parseReplyPlan(generated) : null;
+      const requestedVoice = prepareReplyVoice && plan?.action === 'speak' && plan.voiceRequested === true;
+      if (requestedVoice && isGroup && !toolsCurrent()) return null;
+      const songRequest = resolveReplySong && plan?.action === 'sing' && plan.song;
+      const decision = songRequest ? { action: 'speak', text: '这段暂时唱不了。' }
+        : autonomous ? validateSocialDecision(generated, { minWaitMs: waitMinMs })
+          : { action: 'speak', text: mediaPlan ? privateReplyText(generated, plan) : generated };
+      if (decision.action !== 'speak') {
+        if (autonomous && isCurrent(token, authGeneration, true)) {
+          await scheduleDecision(scope, records.at(-1), decision, token, authGeneration);
         }
-        if (typeof song?.learn === 'function') {
-          if (songJob) operation = { status: 'busy', detail: '我正在学另一首歌，等这段唱完再点吧。' };
-          else {
-            learnSong = song.learn;
-            operation = { status: 'preparing', detail: song.text };
+        return { character: role.id, action: decision.action, unread: unread.length };
+      }
+      reply = cleanText(decision.text, 4_000, '回复').slice(0, 1_000);
+      if (!await canDeliver()) return null;
+      let audio = null;
+      let performance = null;
+      let learnSong = null;
+      let faceSent = false;
+      const localChoice = !requestedVoice && sendLocalSticker && plan?.action === 'speak' &&
+        Number.isInteger(plan.localSticker) && localOptions[plan.localSticker - 1];
+      if (localChoice && await canUseTools()) {
+        let asset;
+        try { asset = await stickerLibrary.read(role.id, stickerScope, localChoice.id); }
+        catch (error) { onError(error); }
+        if (!await canUseTools()) return null;
+        if (asset) {
+          await sendLocalSticker(incoming.contact, incoming.kind, asset);
+          faceSent = true;
+          reply = '[本地表情：' + asset.label + ']';
+        }
+      }
+      const face = !requestedVoice && !faceSent && plan?.action === 'speak' && typeof plan.text === 'string' && plan.text.trim() &&
+        Number.isInteger(plan.face) && faces[plan.face - 1];
+      if (face) {
+        const stillEnabled = (await availableFaces(role.id)).some(({ id }) => id === face.id);
+        if (!await canDeliver()) return null;
+        if (stillEnabled) {
+          await sendReplyFace(incoming.contact, incoming.kind, face.id);
+          faceSent = true;
+          reply = '[收藏表情：' + face.label + ']';
+        }
+      }
+      if (songRequest) {
+        let operation;
+        try {
+          const song = await resolveReplySong(songRequest, { roleId: role.id });
+          if (typeof song?.text === 'string' && song.text.trim()) reply = cleanText(song.text, 4_000, '点歌回复').slice(0, 1_000);
+          if (Buffer.isBuffer(song?.audio)) {
+            audio = song.audio;
+            performance = song.performance;
           }
-        } else if (!audio) {
-          onError(new Error('歌曲解析未返回音频：' + (song?.text || '没有可用音源。')));
-          operation = { status: 'failed', detail: song?.text || '暂时没有可唱的片段。' };
+          if (typeof song?.learn === 'function') {
+            if (songJob) operation = { status: 'busy', detail: '我正在学另一首歌，等这段唱完再点吧。' };
+            else {
+              learnSong = song.learn;
+              operation = { status: 'preparing', detail: song.text };
+            }
+          } else if (!audio) {
+            onError(new Error('歌曲解析未返回音频：' + (song?.text || '没有可用音源。')));
+            operation = { status: 'failed', detail: song?.text || '暂时没有可唱的片段。' };
+          }
+        } catch (error) {
+          onError(error);
+          operation = { status: 'failed', detail: songErrorText(error) };
         }
-      } catch (error) {
-        onError(error);
-        operation = { status: 'failed', detail: songErrorText(error) };
-      }
-      if (operation) {
+        if (operation) {
+          if (!await canDeliver()) return null;
+          reply = await songOperationReply({ incoming, role, message: modelText, request: songRequest,
+            stage: 'resolve', ...operation });
+        }
         if (!await canDeliver()) return null;
-        reply = await songOperationReply({ incoming, role, message: modelText, request: songRequest,
-          stage: 'resolve', ...operation });
-      }
-      if (!await canDeliver()) return null;
-    } else if (!faceSent && !face && prepareReplyVoice && (requestedText || chooseReplyFormat) &&
-        (!mediaPlan || [...reply].length <= speechCharacterLimit)) {
-      audio = await prepareReplyVoice(role.id, reply, mediaPlan ? speechTimeoutMs : undefined);
-      if (!await canDeliver()) return null;
-      if (audio && !requestedText && chooseReplyFormat) {
-        let format;
-        try { format = await chooseReplyFormat({ role, message, reply, kind: incoming.kind }); } catch {}
-        if (format !== 'voice') audio = null;
+      } else if (requestedVoice) {
+        const draft = reply;
+        reply = draft.slice(0, 300).replace(/[\uD800-\uDBFF]$/u, '').trimEnd();
+        audio = await prepareRequestedVoice(prepareReplyVoice, role.id, reply, canDeliver, onError);
         if (!await canDeliver()) return null;
+        if (!audio) {
+          let replacement;
+          try {
+            replacement = speakPlanText(await generate({ role,
+              message: conversation.modelMessage ?? message,
+              mediaImages: conversation.mediaImages ?? resolved.images,
+              voiceFailureMode: true, ownerPrivate: isFriendConversation(incoming) && incoming.contact === owner,
+            }));
+          } catch (error) { onError(error); }
+          if (!await canDeliver()) return null;
+          reply = replacement && replacement !== draft && replacement !== reply ? replacement : '';
+        }
+      } else if (!faceSent && !face && prepareReplyVoice && chooseReplyFormat && [...reply].length <= speechCharacterLimit) {
+        audio = await prepareReplyVoice(role.id, reply, speechTimeoutMs);
+        if (!await canDeliver()) return null;
+        if (audio) {
+          let format;
+          try { format = await chooseReplyFormat({ role, message, reply, kind: incoming.kind }); } catch {}
+          if (format !== 'voice') audio = null;
+          if (!await canDeliver()) return null;
+        }
+      }
+      if (reply && !faceSent) {
+        if (audio) {
+          const receipt = await deliver(incoming.contact, reply, incoming.kind, audio);
+          if (songRequest) await rememberSong(performance, incoming, role, canDeliver, receipt);
+        } else await deliver(incoming.contact, reply, incoming.kind);
+      }
+      if (learnSong && await canDeliver()) {
+        startSongJob(learnSong, { incoming, role, message: modelText, request: songRequest, canDeliver,
+          current: () => isCurrent(token, authGeneration, autonomous) });
       }
     }
-    if (!faceSent) {
-      if (audio) {
-        const receipt = await deliver(incoming.contact, reply, incoming.kind, audio);
-        if (songRequest) await rememberSong(performance, incoming, role, canDeliver, receipt);
-      } else await deliver(incoming.contact, reply, incoming.kind);
-    }
-    if (learnSong && await canDeliver()) {
-      startSongJob(learnSong, { incoming, role, message: modelText, request: songRequest, canDeliver,
-        current: () => isCurrent(token, authGeneration, autonomous) });
-    }
-    if (record) {
+    if (reply && record) {
       const messages = (unread.length ? unread : [incoming]).map((item) =>
         !burstIds && item.messageId === incoming.messageId ? { ...item, text: resolved.text } : item);
       const saved = await addMemory(role.id, scope, {
@@ -553,6 +664,7 @@ export function createMessageHandler({ owner, selfId, admins = [], groups = [], 
       cancelWait(scope);
       await unreadPool.flush();
     }
+    if (!reply) return { character: role.id, action: 'skip', wakeReason };
     if (askGroupConsent && social.enabled && groups.length > 0 && isFriendConversation(incoming) &&
         incoming.contact === owner && !consentPrompted && isCurrent(token, authGeneration, false)) {
       await deliver(owner, '如果允许我在本次桥接登录期间参与已配置的白名单群，请回复“同意群聊”。回复“撤销群聊”可立即取消；退出或重启后授权失效，白名单外群始终不处理。', 'private');
@@ -670,7 +782,7 @@ export function sampleEvent(text, messageId = Date.now()) {
     message_id: messageId, message: [{ type: 'text', data: { text } }] };
 }
 
-export async function startOneBot({ owner, selfId, admins = [], groups = [], wsUrl, httpUrl, wsToken, httpToken, generate, send, social, autonomousMedia = false, loadReplyFaces = null, signal, shouldContinue = () => true, generationToken = () => 0, onEvent = () => {} }) {
+export async function startOneBot({ owner, selfId, admins = [], groups = [], wsUrl, httpUrl, wsToken, httpToken, generate, send, social, autonomousMedia = false, imageDelayCompensation = true, loadReplyFaces = null, signal, shouldContinue = () => true, generationToken = () => 0, onEvent = () => {} }) {
   for (const id of [owner, selfId]) {
     if (!/^[1-9][0-9]{3,14}$/.test(id)) throw new Error('请设置 SURFCORE_QQ_OWNER 和 SURFCORE_QQ_BOT。');
   }
@@ -709,7 +821,7 @@ export async function startOneBot({ owner, selfId, admins = [], groups = [], wsU
 
   if (signal?.aborted) return;
   const handle = createMessageHandler({ owner, selfId, admins, groups, generate, autoExtract: send ? autoExtractMemory : null, social, record: send, persistUnread: send,
-    groupBursts: autonomousMedia,
+    groupBursts: autonomousMedia, imageDelayCompensation,
     audioCache: send && autonomousMedia ? voiceCache : null,
     onExtraction: (scope, result) => onEvent({ type: 'memory-compressed', scope, processed: result.processed }),
     onGroupAuthorization: (authorized) => onEvent({ type: 'group-authorization', authorized }),
@@ -757,15 +869,17 @@ export async function startOneBot({ owner, selfId, admins = [], groups = [], wsU
         : undefined;
       return prepareSongReply(request, { signal, roleId, acquireQQMusic });
     } : null,
-    prepareReplyVoice: send ? async (roleId, text, timeoutMs) => {
+    prepareReplyVoice: send ? async (roleId, text, timeoutMs, { signal: attemptSignal, explicit } = {}) => {
+      const type = explicit ? 'voiceSynthesisIncomplete' : 'voiceFallback';
+      const workSignal = signal && attemptSignal ? AbortSignal.any([signal, attemptSignal]) : attemptSignal ?? signal;
       try {
         const preferences = await readCharacterPreferences(roleId);
         if (preferences.providerId === 'none') throw new Error('当前角色尚未绑定音色。');
-        const result = await synthesize({ ...preferences, text, allowOnline: false, signal, timeoutMs });
+        const result = await synthesize({ ...preferences, text, allowOnline: false, signal: workSignal, timeoutMs });
         if (result.status === 'audio') return result.audio;
-        onEvent({ type: 'voiceFallback', reason: result.reason });
+        onEvent({ type, reason: attemptSignal?.reason?.name === 'TimeoutError' ? '合成超时。' : result.reason });
       } catch (error) {
-        onEvent({ type: 'voiceFallback', reason: error.message });
+        onEvent({ type, reason: error.message });
       }
       return null;
     } : null,

@@ -262,10 +262,10 @@ test('sent songs enter only their role and conversation memory with grounded lyr
       }
     });
 
-    await t.test('ordinary voice replies create no song note', async () => {
+    await t.test('explicit spoken replies create no song note', async () => {
       const before = (await notes()).length;
       let audios = 0;
-      const handle = create({ generate: async () => '你好。', resolveReplySong: null,
+      const handle = create({ generate: async () => ({ action: 'speak', text: '你好。', voiceRequested: true }), resolveReplySong: null,
         prepareReplyVoice: async () => Buffer.from('speech'),
         deliver: async (_contact, _text, _kind, audio) => { if (audio) audios++; },
       });

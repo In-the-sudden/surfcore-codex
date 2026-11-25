@@ -1,6 +1,6 @@
 'use strict';
 let qqInitialized = false, qqBusy = false, qqState, qqSupportsAliases = false;
-const qqFields = ['owner', 'bot', 'admins', 'groups', 'ws', 'http', 'social-enabled', 'social-name', 'social-keywords', 'social-speakers', 'social-probability'];
+const qqFields = ['owner', 'bot', 'admins', 'groups', 'ws', 'http', 'image-delay', 'social-enabled', 'social-name', 'social-keywords', 'social-speakers', 'social-probability'];
 function addSocialControls() {
   if ($('qq-social-enabled')) return;
   const form = $('qq-settings'), group = document.createElement('fieldset');
@@ -34,6 +34,7 @@ function renderQQ(data) {
     $('qq-owner').value = config.owner; $('qq-bot').value = config.selfId;
     $('qq-admins').value = config.admins.join(', '); $('qq-groups').value = config.groups.join(', ');
     $('qq-ws').value = config.wsUrl; $('qq-http').value = config.httpUrl;
+    $('qq-image-delay').checked = config.imageDelayCompensation !== false;
     const social = config.social || {};
     $('qq-social-enabled').checked = social.enabled === true;
     $('qq-social-name').value = (social.botNames || (social.botName ? [social.botName] : [])).join(', ');
@@ -43,7 +44,9 @@ function renderQQ(data) {
     qqInitialized = true;
   }
   const running = data.state !== 'stopped';
-  for (const field of qqFields) $('qq-' + field).disabled = running;
+  const imageDelaySupported = typeof data.config?.imageDelayCompensation === 'boolean';
+  $('qq-image-delay-settings').hidden = !imageDelaySupported;
+  for (const field of qqFields) $('qq-' + field).disabled = running || (field === 'image-delay' && !imageDelaySupported);
   $('qq-save').disabled = running;
   $('qq-preview').disabled = running; $('qq-send').disabled = running;
   $('qq-pause').disabled = data.state !== 'connected'; $('qq-pause').textContent = data.paused ? '恢复' : '暂停';
@@ -69,7 +72,7 @@ $('qq-settings').onsubmit = (event) => {
     status('当前控制台后端不支持多个名字，请打开加载新版代码的新控制台后保存。', true);
     return;
   }
-  qqAction($('qq-save'), 'settings', { owner: $('qq-owner').value.trim(), selfId: $('qq-bot').value.trim(), admins: ids('admins'), groups: ids('groups'), wsUrl: $('qq-ws').value.trim(), httpUrl: $('qq-http').value.trim(), social: { enabled: $('qq-social-enabled').checked, botName: names[0] || '', botNames: names, keywords: $('qq-social-keywords').value.split(/[,，\s]+/).filter(Boolean), speakerIds: $('qq-social-speakers').value.split(/[,，\s]+/).filter(Boolean), probability: Number($('qq-social-probability').value) } });
+  qqAction($('qq-save'), 'settings', { owner: $('qq-owner').value.trim(), selfId: $('qq-bot').value.trim(), admins: ids('admins'), groups: ids('groups'), wsUrl: $('qq-ws').value.trim(), httpUrl: $('qq-http').value.trim(), imageDelayCompensation: $('qq-image-delay').checked, social: { enabled: $('qq-social-enabled').checked, botName: names[0] || '', botNames: names, keywords: $('qq-social-keywords').value.split(/[,，\s]+/).filter(Boolean), speakerIds: $('qq-social-speakers').value.split(/[,，\s]+/).filter(Boolean), probability: Number($('qq-social-probability').value) } });
 };
 for (const mode of ['preview', 'send']) $('qq-' + mode).onclick = () => qqAction($('qq-' + mode), 'start', { mode, wsToken: $('qq-ws-token').value, httpToken: $('qq-http-token').value, useSnowTokens: $('qq-snow-tokens').checked });
 $('qq-pause').onclick = () => qqAction($('qq-pause'), 'pause', { paused: !qqState.paused });

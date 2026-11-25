@@ -39,6 +39,10 @@ test('QQ settings validate, persist without tokens, and control only the managed
     await assert.rejects(manager.save({ ...config, admins: ['10001'] }), /机器人/);
     assert.deepEqual((await manager.save(config)).config.admins, ['10003']);
     await writeFile(join(dir, 'qq-settings.json'), JSON.stringify({ ...config, social: { enabled: true, botName: '知微', keywords: ['海边'], speakerIds: ['10003'], probability: 0.05 } }));
+    assert.equal((await manager.status()).config.imageDelayCompensation, true);
+    await assert.rejects(manager.save({ ...config, imageDelayCompensation: 'false' }), /图片慢加载/);
+    await manager.save({ ...config, imageDelayCompensation: false });
+    assert.equal((await manager.save(config)).config.imageDelayCompensation, false);
     assert.deepEqual((await manager.status()).config.social.botNames, ['知微']);
     assert.deepEqual((await manager.save(config)).config.social.botNames, ['知微']);
     const namesConfig = { enabled: true, botNames: ['知微', ' 小知 ', '小知'], keywords: ['海边'], speakerIds: ['10003'], probability: 0.05 };
@@ -57,6 +61,7 @@ test('QQ settings validate, persist without tokens, and control only the managed
     await starting;
     assert.equal((await manager.status()).state, 'connected');
     assert.equal(options.send, false);
+    assert.equal(options.imageDelayCompensation, false);
     assert.deepEqual(options.social.botNames, ['知微', '小知']);
     assert.equal(options.shouldContinue(), true);
     await manager.pause(true);

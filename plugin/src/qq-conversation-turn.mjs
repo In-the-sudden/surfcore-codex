@@ -35,9 +35,12 @@ export async function runConversationTurn({
   let library = await listStickers();
   let localOptions = library.slice(0, maxStickerChoices);
 
+  const modelMessage = () => Object.keys(context).length
+    ? JSON.stringify({ currentMessage: generation.message, ...context }) : generation.message;
+  const finish = (generated) => ({ generated, localOptions, modelMessage: modelMessage(), mediaImages });
   const next = () => generate({
     ...generation,
-    message: Object.keys(context).length ? JSON.stringify({ currentMessage: generation.message, ...context }) : generation.message,
+    message: modelMessage(),
     mediaImages,
     conversationTools: {
       canReadQuote, canReadHistory, canManage, stickerCount: candidates.length,
@@ -53,7 +56,7 @@ export async function runConversationTurn({
     const plan = modelPlan(generated);
     if (plan?.action === 'lookup') {
       const source = plan.source;
-      if (used.has(source)) return { generated, localOptions };
+      if (used.has(source)) return finish(generated);
       if (source === 'stickers' && library.length > maxStickerChoices) {
         const query = typeof plan.query === 'string' ? plan.query.trim().slice(0, 60).toLowerCase() : '';
         const page = Number.isSafeInteger(plan.page) && plan.page > 0 ? plan.page : 1;
@@ -81,7 +84,7 @@ export async function runConversationTurn({
           canReadHistory = false;
           context.conversationHistory = result.text;
         }
-      } else return { generated, localOptions };
+      } else return finish(generated);
       used.add(source);
       continue;
     }
@@ -108,7 +111,7 @@ export async function runConversationTurn({
       localOptions = library.slice(0, maxStickerChoices);
       continue;
     }
-    return { generated, localOptions };
+    return finish(generated);
   }
   return { generated: null, localOptions };
 }

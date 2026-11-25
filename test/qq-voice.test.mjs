@@ -32,7 +32,7 @@ async function until(predicate, message) {
   }
 }
 
-test('QQ sends the saved voice only for explicit authorized requests and falls back before submission', { timeout: 12000 }, async (t) => {
+test('QQ sends the saved voice for model-confirmed requests and can send a fresh reply after synthesis fails', { timeout: 12000 }, async (t) => {
   const data = await mkdtemp(join(tmpdir(), 'surfcore-qq-voice-'));
   const previousDataDirectory = process.env.SURFCORE_DATA_DIR;
   const previousVoiceToken = process.env.SURFCORE_VOICE_BREEZE_TOKEN;
@@ -106,9 +106,11 @@ test('QQ sends the saved voice only for explicit authorized requests and falls b
     send: true, social: { enabled: true }, signal: controller.signal,
     shouldContinue: () => !paused, generationToken: () => generation,
     onEvent: (event) => events.push(event),
-    generate: async ({ message, decisionMode }) => {
+    generate: async ({ message, decisionMode, voiceFailureMode }) => {
+      if (voiceFailureMode) return { action: 'speak', text: '我在，慢慢说。' };
       prompts.push(message);
-      return decisionMode ? { action: 'speak', text: '群里好。' } : '你好呀。';
+      if (decisionMode) return { action: 'speak', text: '群里好。', voiceRequested: true };
+      return { action: 'speak', text: '你好呀。', voiceRequested: message.startsWith('用语音回复') };
     },
   }).catch((error) => { runError = error; });
   await until(() => events.some(({ type }) => type === 'connected') || runError, 'bridge did not connect');
@@ -134,7 +136,7 @@ test('QQ sends the saved voice only for explicit authorized requests and falls b
 
   push(sampleEvent('用语音回复：打个招呼。', 4));
   await until(() => sends.length >= 3, 'missing private voice reply');
-  assert.equal(prompts[1], '打个招呼。');
+  assert.equal(prompts[1], '用语音回复：打个招呼。');
   assert.deepEqual(sends[2], { path: '/send_private_msg', body: {
     user_id: 10002, message: [{ type: 'record', data: { file: 'base64://' + wav.toString('base64') } }],
   } });
@@ -153,14 +155,14 @@ test('QQ sends the saved voice only for explicit authorized requests and falls b
   assert.equal(sends[4].body.group_id, 10004);
   assert.equal(sends[4].body.message[0].type, 'record');
   assert.equal(JSON.parse(prompts[2]).wakeReason, 'atMention');
-  assert.equal(JSON.parse(prompts[2]).unread.at(-1).text, '打个招呼。');
+  assert.equal(JSON.parse(prompts[2]).unread.at(-1).text, '用语音回复：打个招呼。');
   await until(() => events.some(({ type }) => type === 'voiceUnverified'), 'readback failure was not reported');
 
   failSynthesis = true;
   push(sampleEvent('用语音回复：再打个招呼。', 7));
-  await until(() => sends.length >= 6, 'missing text fallback');
-  assert.deepEqual(sends[5].body.message, [{ type: 'text', data: { text: '你好呀。' } }]);
-  assert.ok(events.some(({ type }) => type === 'voiceFallback'));
+  await until(() => sends.length >= 6, 'missing fresh model reply');
+  assert.deepEqual(sends[5].body.message, [{ type: 'text', data: { text: '我在，慢慢说。' } }]);
+  assert.ok(events.some(({ type }) => type === 'voiceSynthesisIncomplete'));
 
   failSynthesis = false;
   refuseRecord = true;
@@ -194,7 +196,7 @@ test('QQ sends the saved voice only for explicit authorized requests and falls b
     const handle = createMessageHandler({
       owner: '10002', selfId: '10001', groups: ['10004'], social: { enabled: true },
       record: false, simulated: true,
-      generate: async () => ({ action: 'speak', text: '群里好。' }),
+      generate: async () => ({ action: 'speak', text: '群里好。', voiceRequested: true }),
       prepareReplyVoice: async () => {
         synthesisStarted.resolve();
         return finishSynthesis.promise;

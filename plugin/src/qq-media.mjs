@@ -321,7 +321,7 @@ async function fetchVideo(url) {
 
 export async function resolveMessageMedia(incoming, oneBotAction, {
   transcribe = recognizeSpeech, attachmentOffset = 0, stickerOffset = 0,
-  maxImages = MAX_IMAGES, maxTotalImageBytes = MAX_TOTAL_IMAGE_BYTES,
+  maxImages = MAX_IMAGES, maxTotalImageBytes = MAX_TOTAL_IMAGE_BYTES, onImagesReady,
 } = {}) {
   maxImages = Math.min(maxImages, MAX_IMAGES);
   maxTotalImageBytes = Math.min(maxTotalImageBytes, MAX_TOTAL_IMAGE_BYTES);
@@ -341,55 +341,61 @@ export async function resolveMessageMedia(incoming, oneBotAction, {
   text = text.replace(/\[图片(\d+)\]/g, (marker, number) => markers.has(marker) ? marker : '[图片' + number + '未加载]');
   if (!(incoming.media ?? []).some((item) => item.type === 'record')) text = text.replaceAll('[语音]', '[语音未转写]');
   if (!(incoming.media ?? []).some((item) => item.type === 'video')) text = text.replaceAll('[视频]', '[视频未加载]');
-  for (const item of incoming.media ?? []) {
+  const media = incoming.media ?? [];
+  const lastImage = media.findLastIndex(({ type }) => type === 'image');
+  for (const [index, item] of media.entries()) {
     if (item.type === 'image') {
-      let image, result;
-      if (images.length >= maxImages || totalBytes >= maxTotalImageBytes) {
-        text = text.replace(item.marker, item.marker.slice(0, -1) + '总大小超限]');
-        continue;
-      }
-      try { if (item.marketUrl) image = await downloadImage(item.marketUrl, { market: true }); } catch {}
-      try { if (!image && item.file) { result = await oneBotAction('get_image', { file: item.file }); image = await imageBytes(result); } } catch {}
-      const urls = new Set([result?.url, result?.file, item.url].map(qqImageUrl).filter(Boolean));
-      for (const url of urls) {
-        if (image) break;
-        try { image = await downloadImage(url); } catch {}
-      }
-      const framePreview = image && needsFramePreview(image);
-      if (image && (framePreview || item.sticker)) {
-        const preview = await previewSticker(image.bytes, image.extension, {
-          maxImages: maxImages - images.length, maxTotalImageBytes: maxTotalImageBytes - totalBytes,
-        });
-        if (preview) {
-          const first = attachmentOffset + images.length + 1;
-          images.push(...preview.images);
-          totalBytes += preview.images.reduce((sum, { bytes }) => sum + bytes.length, 0);
-          const last = attachmentOffset + images.length;
-          const attachment = '附件' + first + (last === first ? '' : '至' + last);
-          const animated = preview.frameCount > 1;
-          let label = animated ? (preview.complete ? '动图完整预览' : '动图部分预览') : '表情预览';
-          label += '，' + attachment;
-          if (animated) {
-            label += '，' + (preview.complete ? '共' + preview.frameCount : '前' + preview.shownFrames + '/' + preview.frameCount) +
-              '帧，按附件顺序逐行阅读，每行从左到右，格内标有帧号及时长（如有）';
-          }
-          if (preview.complete && (item.sticker || animated) && (!item.marketUrl || framePreview)) {
-            stickers.push({ bytes: image.bytes, extension: image.extension, visualHash: preview.visualHash });
-            label += '；可收藏表情' + (stickerOffset + stickers.length);
-          }
-          text = text.replace(item.marker, item.marker.slice(0, -1) + '（' + label + '）]');
+      try {
+        let image, result;
+        if (images.length >= maxImages || totalBytes >= maxTotalImageBytes) {
+          text = text.replace(item.marker, item.marker.slice(0, -1) + '总大小超限]');
           continue;
         }
-        if (framePreview) {
-          text = text.replace(item.marker, item.marker.slice(0, -1) + '（动图预览不可用）]');
-          continue;
+        try { if (item.marketUrl) image = await downloadImage(item.marketUrl, { market: true }); } catch {}
+        try { if (!image && item.file) { result = await oneBotAction('get_image', { file: item.file }); image = await imageBytes(result); } } catch {}
+        const urls = new Set([result?.url, result?.file, item.url].map(qqImageUrl).filter(Boolean));
+        for (const url of urls) {
+          if (image) break;
+          try { image = await downloadImage(url); } catch {}
         }
+        const framePreview = image && needsFramePreview(image);
+        if (image && (framePreview || item.sticker)) {
+          const preview = await previewSticker(image.bytes, image.extension, {
+            maxImages: maxImages - images.length, maxTotalImageBytes: maxTotalImageBytes - totalBytes,
+          });
+          if (preview) {
+            const first = attachmentOffset + images.length + 1;
+            images.push(...preview.images);
+            totalBytes += preview.images.reduce((sum, { bytes }) => sum + bytes.length, 0);
+            const last = attachmentOffset + images.length;
+            const attachment = '附件' + first + (last === first ? '' : '至' + last);
+            const animated = preview.frameCount > 1;
+            let label = animated ? (preview.complete ? '动图完整预览' : '动图部分预览') : '表情预览';
+            label += '，' + attachment;
+            if (animated) {
+              label += '，' + (preview.complete ? '共' + preview.frameCount : '前' + preview.shownFrames + '/' + preview.frameCount) +
+                '帧，按附件顺序逐行阅读，每行从左到右，格内标有帧号及时长（如有）';
+            }
+            if (preview.complete && (item.sticker || animated) && (!item.marketUrl || framePreview)) {
+              stickers.push({ bytes: image.bytes, extension: image.extension, visualHash: preview.visualHash });
+              label += '；可收藏表情' + (stickerOffset + stickers.length);
+            }
+            text = text.replace(item.marker, item.marker.slice(0, -1) + '（' + label + '）]');
+            continue;
+          }
+          if (framePreview) {
+            text = text.replace(item.marker, item.marker.slice(0, -1) + '（动图预览不可用）]');
+            continue;
+          }
+        }
+        if (image && totalBytes + image.bytes.length <= maxTotalImageBytes) {
+          totalBytes += image.bytes.length;
+          images.push(image);
+          text = text.replace(item.marker, item.marker.slice(0, -1) + '（附件' + (attachmentOffset + images.length) + '）]');
+        } else text = text.replace(item.marker, item.marker.slice(0, -1) + (image ? '总大小超限]' : '获取失败]'));
+      } finally {
+        if (index === lastImage) onImagesReady?.();
       }
-      if (image && totalBytes + image.bytes.length <= maxTotalImageBytes) {
-        totalBytes += image.bytes.length;
-        images.push(image);
-        text = text.replace(item.marker, item.marker.slice(0, -1) + '（附件' + (attachmentOffset + images.length) + '）]');
-      } else text = text.replace(item.marker, item.marker.slice(0, -1) + (image ? '总大小超限]' : '获取失败]'));
     } else if (item.type === 'video') {
       let result;
       try {
